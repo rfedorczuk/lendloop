@@ -31,7 +31,7 @@ npm install
 
 ### 2. Clerk
 
-Create an application in the Clerk dashboard and turn on the Convex integration for it (Clerk then issues tokens for the `convex` audience; details in the [Convex and Clerk guide](https://docs.convex.dev/auth/clerk)). Put the keys into `.env.local`:
+Create an application in the Clerk dashboard and turn on the Convex integration for it (see the [Convex and Clerk guide](https://docs.convex.dev/auth/clerk)). What Convex needs from Clerk is a JWT template named `convex` with the claim `aud: convex`, plus `name`, `email` and `email_verified`. The integration creates it. You can also add the template by hand under JWT templates. The admin role depends on `email_verified`, so keep that claim. Put the keys into `.env.local`:
 
 ```bash
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
