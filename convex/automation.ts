@@ -28,7 +28,6 @@ export const eventPayload = internalQuery({
     const recipient = await ctx.db.get(event.recipientId);
     if (loan === null || recipient === null) return null;
 
-    const tool = await ctx.db.get(loan.toolId);
     const otherId =
       event.recipientId === loan.ownerId ? loan.borrowerId : loan.ownerId;
     const other = await ctx.db.get(otherId);
@@ -37,7 +36,7 @@ export const eventPayload = internalQuery({
       eventId: event._id,
       kind: event.kind,
       loanId: loan._id,
-      toolName: tool?.name ?? "a tool",
+      toolName: loan.toolName,
       startDate: loan.startDate,
       endDate: loan.endDate,
       recipient: { firstName: firstName(recipient), email: recipient.email },
@@ -132,13 +131,12 @@ export const overdueLoans = internalQuery({
       if (logged?.status === "sent") continue;
 
       const borrower = await ctx.db.get(loan.borrowerId);
-      const tool = await ctx.db.get(loan.toolId);
       if (borrower === null) continue;
 
       result.push({
         loanId: loan._id,
         reminderKey,
-        toolName: tool?.name ?? "a tool",
+        toolName: loan.toolName,
         dueDate: loan.endDate,
         daysOverdue: daysBetween(loan.endDate, args.day),
         borrower: { firstName: firstName(borrower), email: borrower.email },

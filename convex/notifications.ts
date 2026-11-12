@@ -23,14 +23,13 @@ export const list = query({
     for (const event of events) {
       const loan = await ctx.db.get(event.loanId);
       if (loan === null) continue;
-      const tool = await ctx.db.get(loan.toolId);
       const lends = loan.ownerId === user._id;
       const other = await ctx.db.get(lends ? loan.borrowerId : loan.ownerId);
 
       items.push({
         _id: event._id,
         kind: event.kind,
-        toolName: tool?.name ?? "a tool",
+        toolName: loan.toolName,
         otherName: other ? firstName(other) : "A neighbor",
         startDate: loan.startDate,
         endDate: loan.endDate,

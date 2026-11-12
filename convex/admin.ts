@@ -1,13 +1,24 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireAdmin } from "./lib/auth";
+import { cleanSearch, cutPage, pageArgs, rowsToRead } from "./lib/paging";
 
 export const users = query({
-  args: {},
-  handler: async (ctx) => {
+  args: pageArgs,
+  handler: async (ctx, args) => {
     await requireAdmin(ctx);
-    const users = await ctx.db.query("users").collect();
-    return await Promise.all(
+    const text = cleanSearch(args.search);
+    const limit = rowsToRead(args.page);
+    const rows =
+      text !== ""
+        ? await ctx.db
+            .query("users")
+            .withSearchIndex("search_name", (q) => q.search("name", text))
+            .take(limit)
+        : await ctx.db.query("users").order("desc").take(limit);
+
+    const { rows: users, ...paging } = cutPage(rows, args.page);
+    const items = await Promise.all(
       users.map(async (user) => {
         const tools = await ctx.db
           .query("tools")
@@ -22,6 +33,7 @@ export const users = query({
         };
       }),
     );
+    return { items, ...paging };
   },
 });
 

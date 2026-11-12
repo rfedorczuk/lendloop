@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
-import { NOW, day, setup } from "./test.setup";
+import { NOW, PAGE, day, setup } from "./test.setup";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -33,8 +33,8 @@ describe("roles", () => {
     const { alice, bob } = await setup();
     const bobId = (await bob.query(api.users.me, {}))!._id;
 
-    await expect(alice.query(api.admin.users, {})).rejects.toThrow(/admin/);
-    await expect(alice.query(api.loans.all, {})).rejects.toThrow(/admin/);
+    await expect(alice.query(api.admin.users, PAGE)).rejects.toThrow(/admin/);
+    await expect(alice.query(api.loans.all, PAGE)).rejects.toThrow(/admin/);
     await expect(alice.query(api.admin.automationIssues, {})).rejects.toThrow(
       /admin/,
     );
@@ -51,7 +51,7 @@ describe("roles", () => {
       trusted: true,
     });
 
-    const board = await bob.query(api.tools.list, {});
+    const board = (await bob.query(api.tools.list, PAGE)).items;
     expect(board[0].ownerTrusted).toBe(true);
   });
 });
@@ -93,12 +93,12 @@ describe("listings", () => {
 
   test("signed-out visitors cannot read the full board", async () => {
     const { t } = await setup();
-    await expect(t.query(api.tools.list, {})).rejects.toThrow(/sign in/);
+    await expect(t.query(api.tools.list, PAGE)).rejects.toThrow(/sign in/);
   });
 
   test("other members see a short name, never an email", async () => {
     const { bob } = await setup();
-    const [tool] = await bob.query(api.tools.list, {});
+    const [tool] = (await bob.query(api.tools.list, PAGE)).items;
     expect(tool.ownerName).toBe("Alice N.");
     expect(JSON.stringify(tool)).not.toContain("alice@example.com");
   });
@@ -138,7 +138,7 @@ describe("listings", () => {
     await admin.mutation(api.tools.remove, { toolId: drill });
 
     expect(await t.query(api.tools.listPublic, {})).toHaveLength(0);
-    const [request] = await bob.query(api.loans.mine, {});
+    const [request] = (await bob.query(api.loans.mine, PAGE)).items;
     expect(request.status).toBe("declined");
   });
 });
@@ -228,7 +228,7 @@ describe("loans", () => {
     );
 
     await alice.mutation(api.loans.markReturned, { loanId });
-    const [loan] = await alice.query(api.loans.incoming, {});
+    const [loan] = (await alice.query(api.loans.incoming, PAGE)).items;
     expect(loan.status).toBe("returned");
   });
 
@@ -245,7 +245,7 @@ describe("loans", () => {
     // Still out after the due date, because nobody confirmed the return.
     vi.setSystemTime(NOW + 5 * 86_400_000);
     expect(await t.query(api.tools.listPublic, {})).toHaveLength(0);
-    const [late] = await alice.query(api.loans.incoming, {});
+    const [late] = (await alice.query(api.loans.incoming, PAGE)).items;
     expect(late.overdue).toBe(true);
 
     await alice.mutation(api.loans.markReturned, { loanId });
@@ -267,7 +267,7 @@ describe("loans", () => {
 
     // The lender can call it off before the first day.
     await alice.mutation(api.loans.cancel, { loanId });
-    const [loan] = await bob.query(api.loans.mine, {});
+    const [loan] = (await bob.query(api.loans.mine, PAGE)).items;
     expect(loan.status).toBe("cancelled");
   });
 
@@ -282,6 +282,112 @@ describe("loans", () => {
     ).rejects.toThrow(/a year/);
   });
 
+  test("loan lists come in numbered pages, newest first", async () => {
+    const { alice, bob, drill } = await setup();
+    // 23 loans with mixed statuses, so the order can only come from
+    // creation time. A declined request frees Bob to ask again.
+    for (let offset = 1; offset <= 23; offset++) {
+      const loanId = await bob.mutation(api.loans.request, {
+        toolId: drill,
+        startDate: day(offset),
+        endDate: day(offset),
+      });
+      if (offset < 23) {
+        await alice.mutation(api.loans.decide, { loanId, approve: false });
+      }
+    }
+
+    const first = await alice.query(api.loans.incoming, { page: 1 });
+    expect(first.items).toHaveLength(10);
+    expect(first.items[0].startDate).toBe(day(23));
+    expect(first).toMatchObject({ page: 1, firstPage: 1, lastPage: 3 });
+    expect(first.hasMore).toBe(false);
+
+    const last = await alice.query(api.loans.incoming, { page: 3 });
+    expect(last.items.map((loan) => loan.startDate)).toEqual([
+      day(3),
+      day(2),
+      day(1),
+    ]);
+
+    // A page past the end answers with the last page that exists.
+    const beyond = await alice.query(api.loans.incoming, { page: 7 });
+    expect(beyond.page).toBe(3);
+    await expect(alice.query(api.loans.incoming, { page: 0 })).rejects.toThrow(
+      /does not exist/,
+    );
+  });
+
+  test("lists can be searched by name", async () => {
+    const { alice, bob, admin, drill } = await setup();
+    const ladder = await alice.mutation(api.tools.create, {
+      name: "Extension ladder",
+      category: "hand_tools",
+      condition: "good",
+      description: "",
+    });
+    for (const toolId of [drill, ladder]) {
+      await bob.mutation(api.loans.request, {
+        toolId,
+        startDate: day(1),
+        endDate: day(2),
+      });
+    }
+
+    const board = await bob.query(api.tools.list, {
+      page: 1,
+      search: "ladder",
+    });
+    expect(board.items.map((tool) => tool.name)).toEqual(["Extension ladder"]);
+    const filtered = await bob.query(api.tools.list, {
+      page: 1,
+      search: "ladder",
+      category: "power_tools",
+    });
+    expect(filtered.items).toHaveLength(0);
+
+    const mine = await bob.query(api.loans.mine, { page: 1, search: "drill" });
+    expect(mine.items.map((loan) => loan.toolName)).toEqual(["Cordless drill"]);
+    const incoming = await alice.query(api.loans.incoming, {
+      page: 1,
+      search: "ladder",
+    });
+    expect(incoming.items).toHaveLength(1);
+    // Bob lends nothing, so the same search finds nothing for him.
+    const none = await bob.query(api.loans.incoming, {
+      page: 1,
+      search: "ladder",
+    });
+    expect(none.items).toHaveLength(0);
+
+    const members = await admin.query(api.admin.users, {
+      page: 1,
+      search: "carol",
+    });
+    expect(members.items.map((member) => member.name)).toEqual(["Carol Lis"]);
+  });
+
+  test("a renamed tool keeps its loans searchable", async () => {
+    const { alice, bob, drill } = await setup();
+    await bob.mutation(api.loans.request, {
+      toolId: drill,
+      startDate: day(1),
+      endDate: day(2),
+    });
+    await alice.mutation(api.tools.update, {
+      toolId: drill,
+      name: "Impact driver",
+      category: "power_tools",
+      condition: "good",
+      description: "",
+    });
+    const found = await bob.query(api.loans.mine, {
+      page: 1,
+      search: "impact",
+    });
+    expect(found.items.map((loan) => loan.toolName)).toEqual(["Impact driver"]);
+  });
+
   test("members see only loans they are part of", async () => {
     const { alice, bob, carol, drill } = await setup();
     await bob.mutation(api.loans.request, {
@@ -289,11 +395,11 @@ describe("loans", () => {
       startDate: day(1),
       endDate: day(2),
     });
-    expect(await alice.query(api.loans.incoming, {})).toHaveLength(1);
+    expect((await alice.query(api.loans.incoming, PAGE)).items).toHaveLength(1);
     expect(await alice.query(api.loans.waitingCount, {})).toBe(1);
     expect(await carol.query(api.loans.waitingCount, {})).toBe(0);
-    expect(await bob.query(api.loans.mine, {})).toHaveLength(1);
-    expect(await carol.query(api.loans.mine, {})).toHaveLength(0);
-    expect(await carol.query(api.loans.incoming, {})).toHaveLength(0);
+    expect((await bob.query(api.loans.mine, PAGE)).items).toHaveLength(1);
+    expect((await carol.query(api.loans.mine, PAGE)).items).toHaveLength(0);
+    expect((await carol.query(api.loans.incoming, PAGE)).items).toHaveLength(0);
   });
 });

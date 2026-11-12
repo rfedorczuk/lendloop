@@ -5,6 +5,7 @@ import type { QueryCtx } from "./_generated/server";
 import { currentUser, publicName, requireAdmin, requireUser } from "./lib/auth";
 import { assertLoanPeriod, today } from "./lib/dates";
 import { conflictingLoan, enqueueLoanEvent } from "./lib/loans";
+import { cleanSearch, cutPage, pageArgs, rowsToRead } from "./lib/paging";
 
 const MAX_OPEN_REQUESTS_PER_BORROWER = 10;
 
@@ -44,14 +45,13 @@ async function describeLoan(
   viewer: "borrower" | "owner" | "admin",
   viewerId: Id<"users"> | null,
 ) {
-  const tool = await ctx.db.get(loan.toolId);
   const owner = await ctx.db.get(loan.ownerId);
   const borrower = await ctx.db.get(loan.borrowerId);
   const day = today();
 
   return {
     _id: loan._id,
-    toolName: tool?.name ?? "Removed listing",
+    toolName: loan.toolName,
     startDate: loan.startDate,
     endDate: loan.endDate,
     status: loan.status,
@@ -63,33 +63,61 @@ async function describeLoan(
   };
 }
 
+// The loan lists grow for as long as the app is used, so they are read a
+// page at a time: newest first, or the best matches for a search by tool name.
 export const mine = query({
-  args: {},
-  handler: async (ctx) => {
+  args: pageArgs,
+  handler: async (ctx, args) => {
     const user = await requireUser(ctx);
-    const loans = await ctx.db
-      .query("loans")
-      .withIndex("by_borrower", (q) => q.eq("borrowerId", user._id))
-      .order("desc")
-      .collect();
-    return await Promise.all(
+    const text = cleanSearch(args.search);
+    const limit = rowsToRead(args.page);
+    const rows =
+      text !== ""
+        ? await ctx.db
+            .query("loans")
+            .withSearchIndex("search_tool", (q) =>
+              q.search("toolName", text).eq("borrowerId", user._id),
+            )
+            .take(limit)
+        : await ctx.db
+            .query("loans")
+            .withIndex("by_borrower", (q) => q.eq("borrowerId", user._id))
+            .order("desc")
+            .take(limit);
+
+    const { rows: loans, ...paging } = cutPage(rows, args.page);
+    const items = await Promise.all(
       loans.map((loan) => describeLoan(ctx, loan, "borrower", user._id)),
     );
+    return { items, ...paging };
   },
 });
 
 export const incoming = query({
-  args: {},
-  handler: async (ctx) => {
+  args: pageArgs,
+  handler: async (ctx, args) => {
     const user = await requireUser(ctx);
-    const loans = await ctx.db
-      .query("loans")
-      .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
-      .order("desc")
-      .collect();
-    return await Promise.all(
+    const text = cleanSearch(args.search);
+    const limit = rowsToRead(args.page);
+    const rows =
+      text !== ""
+        ? await ctx.db
+            .query("loans")
+            .withSearchIndex("search_tool", (q) =>
+              q.search("toolName", text).eq("ownerId", user._id),
+            )
+            .take(limit)
+        : await ctx.db
+            .query("loans")
+            .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
+            .order("desc")
+            .take(limit);
+
+    const { rows: loans, ...paging } = cutPage(rows, args.page);
+    const items = await Promise.all(
       loans.map((loan) => describeLoan(ctx, loan, "owner", user._id)),
     );
+    return { items, ...paging };
   },
 });
 
@@ -102,24 +130,35 @@ export const waitingCount = query({
     const user = await currentUser(ctx);
     if (user === null) return 0;
     const day = today();
-    const loans = await ctx.db
+    const open = await ctx.db
       .query("loans")
-      .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
+      .withIndex("by_owner_and_status", (q) =>
+        q.eq("ownerId", user._id).eq("status", "requested"),
+      )
       .collect();
-    return loans.filter(
-      (loan) => loan.status === "requested" && loan.endDate >= day,
-    ).length;
+    return open.filter((loan) => loan.endDate >= day).length;
   },
 });
 
 export const all = query({
-  args: {},
-  handler: async (ctx) => {
+  args: pageArgs,
+  handler: async (ctx, args) => {
     await requireAdmin(ctx);
-    const loans = await ctx.db.query("loans").order("desc").take(200);
-    return await Promise.all(
+    const text = cleanSearch(args.search);
+    const limit = rowsToRead(args.page);
+    const rows =
+      text !== ""
+        ? await ctx.db
+            .query("loans")
+            .withSearchIndex("search_tool", (q) => q.search("toolName", text))
+            .take(limit)
+        : await ctx.db.query("loans").order("desc").take(limit);
+
+    const { rows: loans, ...paging } = cutPage(rows, args.page);
+    const items = await Promise.all(
       loans.map((loan) => describeLoan(ctx, loan, "admin", null)),
     );
+    return { items, ...paging };
   },
 });
 
@@ -165,6 +204,7 @@ export const request = mutation({
       toolId: tool._id,
       ownerId: tool.ownerId,
       borrowerId: user._id,
+      toolName: tool.name,
       startDate: args.startDate,
       endDate: args.endDate,
       status: "requested",

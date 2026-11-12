@@ -18,11 +18,8 @@ export function occupiedPeriod(loan: Doc<"loans">, day: string) {
   };
 }
 
-export function availability(
-  approvedLoans: Doc<"loans">[],
-  day: string,
-): Availability {
-  const current = approvedLoans.find((loan) => loan.startDate <= day);
+function availability(approved: Doc<"loans">[], day: string): Availability {
+  const current = approved.find((loan) => loan.startDate <= day);
   if (current) {
     return {
       state: "on_loan",
@@ -30,27 +27,31 @@ export function availability(
       overdue: current.endDate < day,
     };
   }
-  const upcoming = approvedLoans
+  const upcoming = approved
     .map((loan) => loan.startDate)
     .sort()
     .at(0);
   return { state: "available", reservedFrom: upcoming };
 }
 
-export async function approvedLoansByTool(
+async function approvedLoans(
   ctx: Ctx,
-): Promise<Map<Id<"tools">, Doc<"loans">[]>> {
-  const approved = await ctx.db
+  toolId: Id<"tools">,
+): Promise<Doc<"loans">[]> {
+  return await ctx.db
     .query("loans")
-    .withIndex("by_status_and_end", (q) => q.eq("status", "approved"))
+    .withIndex("by_tool_and_status", (q) =>
+      q.eq("toolId", toolId).eq("status", "approved"),
+    )
     .collect();
-  const byTool = new Map<Id<"tools">, Doc<"loans">[]>();
-  for (const loan of approved) {
-    const list = byTool.get(loan.toolId) ?? [];
-    list.push(loan);
-    byTool.set(loan.toolId, list);
-  }
-  return byTool;
+}
+
+export async function toolAvailability(
+  ctx: Ctx,
+  toolId: Id<"tools">,
+  day: string,
+): Promise<Availability> {
+  return availability(await approvedLoans(ctx, toolId), day);
 }
 
 export async function conflictingLoan(
@@ -59,15 +60,10 @@ export async function conflictingLoan(
   period: { startDate: string; endDate: string },
   day: string,
 ): Promise<Doc<"loans"> | null> {
-  const loans = await ctx.db
-    .query("loans")
-    .withIndex("by_tool", (q) => q.eq("toolId", toolId))
-    .collect();
+  const approved = await approvedLoans(ctx, toolId);
   return (
-    loans.find(
-      (loan) =>
-        loan.status === "approved" &&
-        periodsOverlap(occupiedPeriod(loan, day), period),
+    approved.find((loan) =>
+      periodsOverlap(occupiedPeriod(loan, day), period),
     ) ?? null
   );
 }

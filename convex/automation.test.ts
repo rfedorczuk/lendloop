@@ -6,7 +6,7 @@ import {
   signedHeaders,
   verify,
 } from "./lib/signature";
-import { NOW, SECRET, day, setup } from "./test.setup";
+import { NOW, PAGE, SECRET, day, setup } from "./test.setup";
 
 const WEBHOOK = "http://n8n.test/webhook/lendloop/loan-event";
 
@@ -134,8 +134,8 @@ describe("activity and housekeeping", () => {
       status: "sent",
     });
 
-    const [asLender] = await alice.query(api.loans.incoming, {});
-    const [asBorrower] = await bob.query(api.loans.mine, {});
+    const [asLender] = (await alice.query(api.loans.incoming, PAGE)).items;
+    const [asBorrower] = (await bob.query(api.loans.mine, PAGE)).items;
     expect(asLender.activity).toHaveLength(1);
     expect(asBorrower.activity).toHaveLength(0);
   });
@@ -190,7 +190,7 @@ describe("activity and housekeeping", () => {
     vi.setSystemTime(NOW + 3 * 86_400_000);
     expect(await t.mutation(internal.maintenance.expireRequests, {})).toBe(1);
 
-    const [loan] = await alice.query(api.loans.incoming, {});
+    const [loan] = (await alice.query(api.loans.incoming, PAGE)).items;
     expect(loan.status).toBe("declined");
   });
 
@@ -267,7 +267,7 @@ describe("n8n to Convex", () => {
       reason: "duplicate",
     });
 
-    const [loan] = await alice.query(api.loans.incoming, {});
+    const [loan] = (await alice.query(api.loans.incoming, PAGE)).items;
     expect(loan.activity).toHaveLength(1);
     expect(loan.activity[0]).toMatchObject({
       kind: "reminder",

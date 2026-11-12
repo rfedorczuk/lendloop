@@ -43,7 +43,9 @@ export default defineSchema({
     trustedLender: v.boolean(),
     // When the user last opened the notification list.
     notificationsSeenAt: v.optional(v.number()),
-  }).index("by_token", ["tokenIdentifier"]),
+  })
+    .index("by_token", ["tokenIdentifier"])
+    .searchIndex("search_name", { searchField: "name" }),
 
   tools: defineTable({
     ownerId: v.id("users"),
@@ -53,12 +55,24 @@ export default defineSchema({
     description: v.string(),
     // Listings are soft-deleted so past loans keep their history.
     removedAt: v.optional(v.number()),
-  }).index("by_owner", ["ownerId"]),
+  })
+    .index("by_owner", ["ownerId"])
+    // removedAt is undefined for a live listing, so these two indexes list
+    // the live ones, newest first, with or without a category.
+    .index("by_removed", ["removedAt"])
+    .index("by_removed_and_category", ["removedAt", "category"])
+    .searchIndex("search_name", {
+      searchField: "name",
+      filterFields: ["removedAt", "category"],
+    }),
 
   loans: defineTable({
     toolId: v.id("tools"),
     ownerId: v.id("users"),
     borrowerId: v.id("users"),
+    // Copied from the tool, so loans can be searched by name and keep a
+    // readable title after the listing is removed.
+    toolName: v.string(),
     // Calendar dates as YYYY-MM-DD. Both ends are inclusive.
     startDate: v.string(),
     endDate: v.string(),
@@ -66,10 +80,15 @@ export default defineSchema({
     decidedAt: v.optional(v.number()),
     returnedAt: v.optional(v.number()),
   })
-    .index("by_tool", ["toolId"])
+    .index("by_tool_and_status", ["toolId", "status"])
     .index("by_owner", ["ownerId"])
+    .index("by_owner_and_status", ["ownerId", "status"])
     .index("by_borrower", ["borrowerId"])
-    .index("by_status_and_end", ["status", "endDate"]),
+    .index("by_status_and_end", ["status", "endDate"])
+    .searchIndex("search_tool", {
+      searchField: "toolName",
+      filterFields: ["ownerId", "borrowerId"],
+    }),
 
   // One row per loan event and recipient. It is written in the same
   // transaction as the loan change and does two jobs: the in-app notification

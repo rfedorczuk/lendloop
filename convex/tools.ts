@@ -4,13 +4,11 @@ import type { Doc } from "./_generated/dataModel";
 import { category, condition } from "./schema";
 import { publicName, requireUser } from "./lib/auth";
 import { today } from "./lib/dates";
-import {
-  approvedLoansByTool,
-  availability,
-  enqueueLoanEvent,
-} from "./lib/loans";
+import { enqueueLoanEvent, toolAvailability } from "./lib/loans";
+import { cleanSearch, cutPage, pageArgs, rowsToRead } from "./lib/paging";
 
 const MAX_LISTINGS_PER_OWNER = 50;
+const PUBLIC_LIST_SIZE = 50;
 
 function cleanListing(input: { name: string; description: string }) {
   // Control characters and line breaks become spaces. Names end up in email
@@ -33,44 +31,64 @@ export const listPublic = query({
   args: {},
   handler: async (ctx) => {
     const day = today();
-    const loans = await approvedLoansByTool(ctx);
-    const tools = await ctx.db.query("tools").collect();
-    return tools
-      .filter((tool) => tool.removedAt === undefined)
-      .filter(
-        (tool) =>
-          availability(loans.get(tool._id) ?? [], day).state === "available",
-      )
-      .map((tool) => ({
-        _id: tool._id,
-        name: tool.name,
-        category: tool.category,
-      }));
+    const tools = await ctx.db
+      .query("tools")
+      .withIndex("by_removed", (q) => q.eq("removedAt", undefined))
+      .order("desc")
+      .take(PUBLIC_LIST_SIZE);
+
+    const free = [];
+    for (const tool of tools) {
+      const { state } = await toolAvailability(ctx, tool._id, day);
+      if (state === "available") {
+        free.push({ _id: tool._id, name: tool.name, category: tool.category });
+      }
+    }
+    return free;
   },
 });
 
+// The board: live listings, newest first, or the best matches when a search
+// is given. One page at a time.
 export const list = query({
-  args: { category: v.optional(category) },
+  args: { ...pageArgs, category: v.optional(category) },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
-    const day = today();
-    const loans = await approvedLoansByTool(ctx);
-    const tools = (await ctx.db.query("tools").collect()).filter(
-      (tool) =>
-        tool.removedAt === undefined &&
-        (args.category === undefined || tool.category === args.category),
-    );
+    const text = cleanSearch(args.search);
+    const limit = rowsToRead(args.page);
+    const { category } = args;
 
-    const owners = new Map<string, Doc<"users"> | null>();
-    for (const tool of tools) {
-      if (!owners.has(tool.ownerId)) {
-        owners.set(tool.ownerId, await ctx.db.get(tool.ownerId));
-      }
+    let rows: Doc<"tools">[];
+    if (text !== "") {
+      rows = await ctx.db
+        .query("tools")
+        .withSearchIndex("search_name", (q) => {
+          const live = q.search("name", text).eq("removedAt", undefined);
+          return category === undefined ? live : live.eq("category", category);
+        })
+        .take(limit);
+    } else if (category !== undefined) {
+      rows = await ctx.db
+        .query("tools")
+        .withIndex("by_removed_and_category", (q) =>
+          q.eq("removedAt", undefined).eq("category", category),
+        )
+        .order("desc")
+        .take(limit);
+    } else {
+      rows = await ctx.db
+        .query("tools")
+        .withIndex("by_removed", (q) => q.eq("removedAt", undefined))
+        .order("desc")
+        .take(limit);
     }
 
-    return tools.map((tool) => {
-      const owner = owners.get(tool.ownerId) ?? null;
-      return {
+    const { rows: tools, ...paging } = cutPage(rows, args.page);
+    const day = today();
+    const items = [];
+    for (const tool of tools) {
+      const owner = await ctx.db.get(tool.ownerId);
+      items.push({
         _id: tool._id,
         name: tool.name,
         category: tool.category,
@@ -79,32 +97,39 @@ export const list = query({
         ownerName: publicName(owner),
         ownerTrusted: owner?.trustedLender ?? false,
         isMine: tool.ownerId === user._id,
-        availability: availability(loans.get(tool._id) ?? [], day),
-      };
-    });
+        availability: await toolAvailability(ctx, tool._id, day),
+      });
+    }
+    return { items, ...paging };
   },
 });
 
+// A member has at most MAX_LISTINGS_PER_OWNER listings, so this list is
+// short by construction and is not paged.
 export const mine = query({
   args: {},
   handler: async (ctx) => {
     const user = await requireUser(ctx);
     const day = today();
-    const loans = await approvedLoansByTool(ctx);
     const tools = await ctx.db
       .query("tools")
       .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
+      .order("desc")
       .collect();
-    return tools
-      .filter((tool) => tool.removedAt === undefined)
-      .map((tool) => ({
+
+    const items = [];
+    for (const tool of tools) {
+      if (tool.removedAt !== undefined) continue;
+      items.push({
         _id: tool._id,
         name: tool.name,
         category: tool.category,
         condition: tool.condition,
         description: tool.description,
-        availability: availability(loans.get(tool._id) ?? [], day),
-      }));
+        availability: await toolAvailability(ctx, tool._id, day),
+      });
+    }
+    return items;
   },
 });
 
@@ -157,11 +182,23 @@ export const update = mutation({
     if (tool.ownerId !== user._id) {
       throw new ConvexError("You can edit only your own listings.");
     }
+    const listing = cleanListing(args);
     await ctx.db.patch(tool._id, {
       category: args.category,
       condition: args.condition,
-      ...cleanListing(args),
+      ...listing,
     });
+
+    // Loans carry a copy of the name. Keep it in step after a rename.
+    if (listing.name !== tool.name) {
+      const loans = await ctx.db
+        .query("loans")
+        .withIndex("by_tool_and_status", (q) => q.eq("toolId", tool._id))
+        .collect();
+      for (const loan of loans) {
+        await ctx.db.patch(loan._id, { toolName: listing.name });
+      }
+    }
   },
 });
 
@@ -185,7 +222,7 @@ export const remove = mutation({
     // A loan already in progress stays, so the owner can still mark it returned.
     const loans = await ctx.db
       .query("loans")
-      .withIndex("by_tool", (q) => q.eq("toolId", tool._id))
+      .withIndex("by_tool_and_status", (q) => q.eq("toolId", tool._id))
       .collect();
     for (const loan of loans) {
       if (loan.status === "requested") {

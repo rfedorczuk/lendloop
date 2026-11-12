@@ -11,6 +11,9 @@ export const modules = import.meta.glob("./**/*.ts");
 export const NOW = Date.parse("2026-11-12T10:00:00Z");
 export const SECRET = "test-secret-not-used-anywhere-else";
 
+// The first page of a list.
+export const PAGE = { page: 1 };
+
 export function day(offset: number): string {
   return new Date(NOW + offset * 86_400_000).toISOString().slice(0, 10);
 }
