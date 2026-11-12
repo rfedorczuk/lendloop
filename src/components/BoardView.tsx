@@ -15,6 +15,7 @@ import { useSubmit } from "@/lib/useSubmit";
 import { BorrowForm } from "./BorrowForm";
 import {
   Button,
+  ConfirmButton,
   Empty,
   FormError,
   List,
@@ -80,17 +81,20 @@ function ToolRow({ tool, isAdmin }: { tool: BoardTool; isAdmin: boolean }) {
         {!borrowing && (
           <div className="flex shrink-0 items-center gap-1">
             {isAdmin && !tool.isMine && (
-              <Button
-                variant="danger"
-                size="sm"
+              <ConfirmButton
+                label="Remove"
+                confirmLabel="Confirm removal"
+                describedAs={tool.name}
                 pending={pending}
-                onClick={() => run(() => remove({ toolId: tool._id }))}
-              >
-                Remove
-              </Button>
+                onConfirm={() => run(() => remove({ toolId: tool._id }))}
+              />
             )}
             {!tool.isMine && (
-              <Button size="sm" onClick={() => setBorrowing(true)}>
+              <Button
+                size="sm"
+                aria-label={`Request to borrow ${tool.name}`}
+                onClick={() => setBorrowing(true)}
+              >
                 Request
               </Button>
             )}

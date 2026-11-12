@@ -5,7 +5,7 @@ import type { FunctionReturnType } from "convex/server";
 import { api } from "../../convex/_generated/api";
 import { formatDay } from "@/lib/format";
 import { useSubmit } from "@/lib/useSubmit";
-import { TimeAgo, useNow } from "./TimeAgo";
+import { TimeAgo } from "./TimeAgo";
 import { Button, FormError, List, Row, Status } from "./ui";
 import type { Tone } from "./ui";
 
@@ -36,19 +36,19 @@ function LoanRow({ loan, view }: { loan: Loan; view: View }) {
   const cancel = useMutation(api.loans.cancel);
   const markReturned = useMutation(api.loans.markReturned);
   const { pending, error, run } = useSubmit();
-  const now = useNow();
-  const today = now === null ? null : new Date(now).toISOString().slice(0, 10);
   const loanId = loan._id;
   const status = loan.overdue
     ? { label: "Overdue", tone: "danger" as const }
     : STATUS[loan.status];
 
+  // An approved loan is cancelled before its first day and returned after.
+  const upcoming = loan.status === "approved" && !loan.started;
   const canCancel =
-    view === "borrower" &&
-    (loan.status === "requested" ||
-      (loan.status === "approved" && today !== null && loan.startDate > today));
+    view !== "admin" &&
+    (upcoming || (view === "borrower" && loan.status === "requested"));
   const canDecide = view === "owner" && loan.status === "requested";
-  const canReturn = view === "owner" && loan.status === "approved";
+  const canReturn =
+    view === "owner" && loan.status === "approved" && loan.started;
 
   return (
     <Row>
@@ -83,6 +83,7 @@ function LoanRow({ loan, view }: { loan: Loan; view: View }) {
                   variant="ghost"
                   size="sm"
                   pending={pending}
+                  aria-label={`Decline the request for ${loan.toolName}`}
                   onClick={() => run(() => decide({ loanId, approve: false }))}
                 >
                   Decline
@@ -91,6 +92,7 @@ function LoanRow({ loan, view }: { loan: Loan; view: View }) {
                   variant="primary"
                   size="sm"
                   pending={pending}
+                  aria-label={`Approve the request for ${loan.toolName}`}
                   onClick={() => run(() => decide({ loanId, approve: true }))}
                 >
                   Approve
@@ -101,6 +103,7 @@ function LoanRow({ loan, view }: { loan: Loan; view: View }) {
               <Button
                 size="sm"
                 pending={pending}
+                aria-label={`Mark ${loan.toolName} as returned`}
                 onClick={() => run(() => markReturned({ loanId }))}
               >
                 Mark as returned
@@ -111,9 +114,10 @@ function LoanRow({ loan, view }: { loan: Loan; view: View }) {
                 variant="danger"
                 size="sm"
                 pending={pending}
+                aria-label={`${upcoming ? "Cancel the loan of" : "Cancel the request for"} ${loan.toolName}`}
                 onClick={() => run(() => cancel({ loanId }))}
               >
-                Cancel request
+                {upcoming ? "Cancel loan" : "Cancel request"}
               </Button>
             )}
           </div>

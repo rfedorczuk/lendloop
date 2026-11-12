@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 import { Show, SignInButton, UserButton } from "@clerk/nextjs";
 import { useConvexAuth, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
+import { NotificationBell } from "./NotificationBell";
 import { buttonClass } from "./ui";
 
 const LINKS = [
@@ -36,7 +37,7 @@ export function NavLinks({
   links,
   pathname,
 }: {
-  links: { href: string; label: string }[];
+  links: { href: string; label: string; count?: number }[];
   pathname: string;
 }) {
   return (
@@ -44,7 +45,7 @@ export function NavLinks({
       aria-label="Main"
       className="no-scrollbar -mx-1 flex min-w-0 gap-0.5 overflow-x-auto px-1 py-1"
     >
-      {links.map(({ href, label }) => (
+      {links.map(({ href, label, count }) => (
         <Link
           key={href}
           href={href}
@@ -52,6 +53,12 @@ export function NavLinks({
           className="flex h-7 shrink-0 items-center whitespace-nowrap rounded-md px-2.5 text-[13px] text-muted transition-colors duration-100 hover:bg-hover hover:text-ink aria-[current=page]:bg-hover aria-[current=page]:font-medium aria-[current=page]:text-ink"
         >
           {label}
+          {count !== undefined && count > 0 && (
+            <span className="ml-1.5 rounded-full bg-ink px-1.5 text-[11px] font-medium leading-4 text-surface">
+              {count}
+              <span className="sr-only"> waiting for your decision</span>
+            </span>
+          )}
         </Link>
       ))}
     </nav>
@@ -81,11 +88,17 @@ function MemberNav() {
   const pathname = usePathname();
   const { isAuthenticated } = useConvexAuth();
   const me = useQuery(api.users.me, isAuthenticated ? {} : "skip");
+  const waiting = useQuery(
+    api.loans.waitingCount,
+    isAuthenticated ? {} : "skip",
+  );
   // Hiding the link is cosmetic. The admin queries check the role themselves.
-  const links =
-    me?.role === "admin"
-      ? [...LINKS, { href: "/admin", label: "Admin" }]
-      : LINKS;
+  const links = [
+    ...LINKS.map((link) =>
+      link.href === "/incoming" ? { ...link, count: waiting } : link,
+    ),
+    ...(me?.role === "admin" ? [{ href: "/admin", label: "Admin" }] : []),
+  ];
   return <NavLinks links={links} pathname={pathname} />;
 }
 
@@ -103,7 +116,10 @@ export function Header() {
       end={
         <>
           <Show when="signed-in">
-            <UserButton />
+            <div className="flex items-center gap-2">
+              <NotificationBell />
+              <UserButton />
+            </div>
           </Show>
           <Show when="signed-out">
             <SignInButton mode="modal">

@@ -132,7 +132,11 @@ export function AdminView({
         <SectionHead
           id="all-loans"
           title="All loans"
-          aside={loans && loans.length > 0 && loans.length}
+          aside={
+            loans &&
+            loans.length > 0 &&
+            (loans.length === 200 ? "Latest 200" : loans.length)
+          }
         />
         {loans === undefined ? (
           <Loading />

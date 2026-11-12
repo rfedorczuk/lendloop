@@ -10,6 +10,7 @@ import { Availability } from "./BoardView";
 import { ToolForm } from "./ToolForm";
 import {
   Button,
+  ConfirmButton,
   Empty,
   FormError,
   List,
@@ -52,15 +53,18 @@ function ListingRow({ tool }: { tool: Listing }) {
           )}
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          <Button
-            variant="danger"
-            size="sm"
+          <ConfirmButton
+            label="Remove"
+            confirmLabel="Confirm removal"
+            describedAs={tool.name}
             pending={pending}
-            onClick={() => run(() => remove({ toolId: tool._id }))}
+            onConfirm={() => run(() => remove({ toolId: tool._id }))}
+          />
+          <Button
+            size="sm"
+            aria-label={`Edit ${tool.name}`}
+            onClick={() => setEditing(true)}
           >
-            Remove
-          </Button>
-          <Button size="sm" onClick={() => setEditing(true)}>
             Edit
           </Button>
         </div>

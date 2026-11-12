@@ -61,6 +61,7 @@ export function ToolForm({
       <Field label="Name" className="sm:col-span-2">
         <input
           required
+          autoFocus={draft._id !== undefined}
           minLength={2}
           maxLength={60}
           placeholder="Cordless drill"

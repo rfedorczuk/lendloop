@@ -15,7 +15,11 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${inter.variable} h-full`}>
-      <body className="flex min-h-full flex-col font-sans">
+      {/* Browser extensions add attributes to <body> before React loads. */}
+      <body
+        className="flex min-h-full flex-col font-sans"
+        suppressHydrationWarning
+      >
         <ClerkProvider>
           <Providers>
             <Header />

@@ -31,6 +31,13 @@ export function MemberGate({ children }: { children: ReactNode }) {
   }, [isAuthenticated, storeUser]);
 
   if (error !== null) return <FormError message={error} />;
-  if (isLoading || !isAuthenticated || !ready) return <Loading />;
+  if (!isLoading && !isAuthenticated) {
+    // Clerk has a session but Convex did not accept its token, or the
+    // session ended. Waiting would not help.
+    return (
+      <FormError message="We could not confirm your session. Reload the page or sign in again." />
+    );
+  }
+  if (!ready) return <Loading />;
   return <>{children}</>;
 }

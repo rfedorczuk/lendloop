@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import type {
   ButtonHTMLAttributes,
   ReactNode,
@@ -51,6 +54,49 @@ export function Button({
       className={`${buttonClass(variant, size)} ${className}`}
       {...props}
     />
+  );
+}
+
+// For actions that cannot be undone. The first click arms the button and
+// changes its label, the second click within a few seconds runs the action.
+export function ConfirmButton({
+  label,
+  confirmLabel,
+  describedAs,
+  pending,
+  onConfirm,
+}: {
+  label: string;
+  confirmLabel: string;
+  // What the action applies to, for screen readers.
+  describedAs: string;
+  pending?: boolean;
+  onConfirm: () => void;
+}) {
+  const [armed, setArmed] = useState(false);
+
+  useEffect(() => {
+    if (!armed) return;
+    const timer = setTimeout(() => setArmed(false), 4000);
+    return () => clearTimeout(timer);
+  }, [armed]);
+
+  return (
+    <Button
+      variant="danger"
+      size="sm"
+      pending={pending}
+      aria-label={`${armed ? confirmLabel : label}: ${describedAs}`}
+      className={armed ? "text-danger" : ""}
+      onBlur={() => setArmed(false)}
+      onClick={() => {
+        if (!armed) return setArmed(true);
+        setArmed(false);
+        onConfirm();
+      }}
+    >
+      {armed ? confirmLabel : label}
+    </Button>
   );
 }
 

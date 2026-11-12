@@ -35,6 +35,7 @@ export function BorrowForm({
         <input
           type="date"
           required
+          autoFocus
           min={todayUtc()}
           value={startDate}
           onChange={(e) => {
