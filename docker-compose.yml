@@ -1,0 +1,62 @@
+# Local automation stack for LendLoop: n8n and a mail catcher.
+#
+#   docker compose up -d
+#   n8n      http://localhost:5678
+#   Mailpit  http://localhost:8025  (every notification and reminder lands here)
+#
+# Values come from .env next to this file, see .env.example.
+
+services:
+  # Imports the workflows from n8n/workflows and publishes them, then exits.
+  # Safe to run on every start: an import overwrites workflows with the same id.
+  n8n-import:
+    image: n8nio/n8n:2.47.5
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        n8n import:workflow --separate --input=/workflows &&
+        n8n publish:workflow --id=lendloopErrorHandler &&
+        n8n publish:workflow --id=lendloopLoanEvents1 &&
+        n8n publish:workflow --id=lendloopOverdueLoans
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows:ro
+
+  n8n:
+    image: n8nio/n8n:2.47.5
+    restart: unless-stopped
+    depends_on:
+      n8n-import:
+        condition: service_completed_successfully
+      mailpit:
+        condition: service_started
+    ports:
+      - "127.0.0.1:${N8N_PORT:-5678}:5678"
+    environment:
+      GENERIC_TIMEZONE: ${TIMEZONE:-UTC}
+      TZ: ${TIMEZONE:-UTC}
+      # Shared HMAC secret. The same value is set in the Convex deployment.
+      AUTOMATION_SECRET: ${AUTOMATION_SECRET:?Set AUTOMATION_SECRET in .env}
+      # Where the Convex HTTP actions live (the *.convex.site URL, or the
+      # local backend through host.docker.internal).
+      CONVEX_SITE_URL: ${CONVEX_SITE_URL:?Set CONVEX_SITE_URL in .env}
+      MAILPIT_URL: http://mailpit:8025
+      OPS_EMAIL: ${OPS_EMAIL:-ops@lendloop.test}
+      # The workflows read the three values above through $env and use Node's
+      # crypto module for HMAC. n8n 2 blocks both unless they are allowed here.
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      NODE_FUNCTION_ALLOW_BUILTIN: crypto
+      N8N_DIAGNOSTICS_ENABLED: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+  mailpit:
+    image: axllent/mailpit:v1.33.1
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${MAILPIT_PORT:-8025}:8025"
+
+volumes:
+  n8n_data:

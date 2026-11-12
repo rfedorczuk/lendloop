@@ -1,0 +1,344 @@
+{
+  "name": "LendLoop: loan event notification",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lendloop/loan-event",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "5f94c5ff-0123-543c-bd5d-9e61be7578f5",
+      "name": "Loan event from Convex",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "lendloop-loan-event"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\n// Rejects anything that Convex did not sign with the shared secret in the\n// last five minutes. The signature covers the raw request body.\nconst secret = $env.AUTOMATION_SECRET;\nif (!secret) throw new Error('AUTOMATION_SECRET is not set for n8n');\n\nconst headers = $input.first().json.headers;\nconst timestamp = String(headers['x-lendloop-timestamp'] ?? '');\nconst received = String(headers['x-lendloop-signature'] ?? '').replace(/^sha256=/, '');\nconst raw = (await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8');\n\nconst expected = crypto.createHmac('sha256', secret).update(`${timestamp}.${raw}`).digest('hex');\nconst fresh = /^\\d+$/.test(timestamp) && Math.abs(Date.now() / 1000 - Number(timestamp)) <= 300;\nconst matches =\n  received.length === expected.length &&\n  crypto.timingSafeEqual(Buffer.from(received), Buffer.from(expected));\n\nif (!fresh || !matches) return [{ json: { valid: false } }];\nreturn [{ json: { valid: true, event: JSON.parse(raw) } }];"
+      },
+      "id": "fe212297-5f5a-5ae1-94a5-1dbbaabd4613",
+      "name": "Verify signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "63916852-4ec8-5447-8f78-a748201d637f",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f9532af6-c8d7-53ed-9f1e-7615fa9fbd1f",
+      "name": "Signature valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"accepted\": true}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "id": "ea3e3067-e3ff-56c3-9ffc-3121ba1a5c99",
+      "name": "Accept",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        660,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"error\": \"Invalid signature\"}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "052ae603-564f-50c2-a31b-74a978c94d3e",
+      "name": "Reject",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        660,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Turns a loan event into one plain-text message for its recipient.\nconst { event } = $input.first().json;\nconst period = `${event.startDate} to ${event.endDate}`;\nconst messages = {\n  'loan.requested': {\n    subject: `${event.otherFirstName} wants to borrow your ${event.toolName}`,\n    text: `${event.otherFirstName} asked to borrow your ${event.toolName} from ${period}. Open LendLoop to approve or decline.`,\n  },\n  'loan.approved': {\n    subject: `Your request for the ${event.toolName} was approved`,\n    text: `${event.otherFirstName} approved your request. The ${event.toolName} is yours from ${period}.`,\n  },\n  'loan.declined': {\n    subject: `Your request for the ${event.toolName} was declined`,\n    text: `Your request for the ${event.toolName} (${period}) was declined. Other tools are on the board.`,\n  },\n  'loan.cancelled': {\n    subject: `The loan of the ${event.toolName} was cancelled`,\n    text: `The loan of the ${event.toolName} planned for ${period} was cancelled.`,\n  },\n  'loan.returned': {\n    subject: `Thanks for returning the ${event.toolName}`,\n    text: `${event.otherFirstName} confirmed that the ${event.toolName} is back. Thanks for returning it.`,\n  },\n};\nconst message = messages[event.kind];\nif (!message) throw new Error(`Unknown event kind: ${event.kind}`);\n\nreturn [{\n  json: {\n    eventId: event.eventId,\n    loanId: event.loanId,\n    mail: {\n      From: { Email: 'no-reply@lendloop.test', Name: 'LendLoop' },\n      To: [{ Email: event.recipient.email, Name: event.recipient.firstName }],\n      Subject: message.subject,\n      Text: `Hi ${event.recipient.firstName},\\n\\n${message.text}\\n\\nLendLoop`,\n    },\n  },\n}];"
+      },
+      "id": "c1392498-067e-598b-8c11-ccb4220a1fef",
+      "name": "Compose message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MAILPIT_URL }}/api/v1/send",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.mail) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "09be8714-2f9d-52bc-9199-2c23130865e1",
+      "name": "Send notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1100,
+        -100
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\n// Signs `${timestamp}.${payload}` the same way convex/lib/signature.ts does.\nfunction signedHeaders(payload) {\n  const secret = $env.AUTOMATION_SECRET;\n  if (!secret) throw new Error('AUTOMATION_SECRET is not set for n8n');\n  const timestamp = Math.floor(Date.now() / 1000).toString();\n  const digest = crypto.createHmac('sha256', secret).update(`${timestamp}.${payload}`).digest('hex');\n  return { 'X-LendLoop-Timestamp': timestamp, 'X-LendLoop-Signature': `sha256=${digest}` };\n}\n\n// The mail node continues on error, so its output says whether it worked.\nconst result = $input.first().json;\nconst source = $('Compose message').first().json;\nconst failed = result.error !== undefined;\nconst body = JSON.stringify({\n  loanId: source.loanId,\n  kind: 'notification',\n  key: `notification:${source.eventId}`,\n  status: failed ? 'failed' : 'sent',\n  detail: failed ? String(result.error.message ?? result.error).slice(0, 200) : undefined,\n});\nreturn [{ json: { body, headers: signedHeaders(body), failed } }];"
+      },
+      "id": "1da8b7a1-5705-5972-9b8e-9dca3d037ce1",
+      "name": "Sign report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CONVEX_SITE_URL }}/automation/log",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify($json.headers) }}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "ff95ef57-755a-56e0-b9f9-47b4590f283f",
+      "name": "Report to Convex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1540,
+        -100
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "65067766-8406-5883-9c1e-bf140b4d76b6",
+              "leftValue": "={{ $('Sign report').first().json.failed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "864dceb1-025c-5a57-8c72-30fc3bc3cab6",
+      "name": "Notification failed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1760,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "errorMessage": "The notification could not be sent. Convex has it marked as failed."
+      },
+      "id": "fc9aaffd-d35f-521b-9b51-00768f860b88",
+      "name": "Fail the run",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1980,
+        -200
+      ]
+    }
+  ],
+  "connections": {
+    "Loan event from Convex": {
+      "main": [
+        [
+          {
+            "node": "Verify signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify signature": {
+      "main": [
+        [
+          {
+            "node": "Signature valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature valid?": {
+      "main": [
+        [
+          {
+            "node": "Accept",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Accept": {
+      "main": [
+        [
+          {
+            "node": "Compose message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose message": {
+      "main": [
+        [
+          {
+            "node": "Send notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send notification": {
+      "main": [
+        [
+          {
+            "node": "Sign report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign report": {
+      "main": [
+        [
+          {
+            "node": "Report to Convex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report to Convex": {
+      "main": [
+        [
+          {
+            "node": "Notification failed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notification failed?": {
+      "main": [
+        [
+          {
+            "node": "Fail the run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "lendloopErrorHandler"
+  },
+  "active": false,
+  "pinData": {},
+  "id": "lendloopLoanEvents1"
+}

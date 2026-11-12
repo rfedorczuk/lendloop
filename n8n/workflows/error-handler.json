@@ -1,0 +1,82 @@
+{
+  "name": "LendLoop: error handler",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "decbde9b-8845-5522-91dc-639ca2444081",
+      "name": "When a workflow fails",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Runs when any LendLoop workflow fails. Only technical details go out.\nconst { execution, workflow } = $input.first().json;\nreturn [{\n  json: {\n    mail: {\n      From: { Email: 'no-reply@lendloop.test', Name: 'LendLoop automation' },\n      To: [{ Email: $env.OPS_EMAIL || 'ops@lendloop.test' }],\n      Subject: `Workflow failed: ${workflow?.name ?? 'unknown'}`,\n      Text: [\n        `Workflow: ${workflow?.name ?? 'unknown'}`,\n        `Failed node: ${execution?.lastNodeExecuted ?? 'unknown'}`,\n        `Error: ${execution?.error?.message ?? 'unknown'}`,\n        `Execution: ${execution?.url ?? execution?.id ?? 'not saved'}`,\n      ].join('\\n'),\n    },\n  },\n}];"
+      },
+      "id": "b8579ff7-ef94-5026-8a96-4ecb8d1f63ab",
+      "name": "Compose alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MAILPIT_URL }}/api/v1/send",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.mail) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "bd0b6308-d2d8-5867-812d-d68916c39a63",
+      "name": "Alert the operator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        440,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "When a workflow fails": {
+      "main": [
+        [
+          {
+            "node": "Compose alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose alert": {
+      "main": [
+        [
+          {
+            "node": "Alert the operator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "pinData": {},
+  "id": "lendloopErrorHandler"
+}
