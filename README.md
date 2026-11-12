@@ -198,6 +198,8 @@ Failures:
 - A member's activity list on a loan shows reminders and the notifications addressed to that member, not the ones sent to the other side.
 - The loan functions answer "not yours" the same way for a missing loan and for someone else's loan, so loan ids cannot be probed.
 - Errors shown to users are written for them (`ConvexError`). Anything unexpected shows a generic message and stays in the logs.
+- The web app sends security headers from `next.config.ts`: a content security policy, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy` and HSTS. The policy lists the hosts the app talks to (itself, the Clerk instance, the Convex deployment, Clerk's bot protection and Turnstile), read from the environment at build time. It forbids framing, plugins, foreign form targets and a changed base URL. It was checked in the browser on the public page, the sign-in page and the signed-in pages, in development and against the production build.
+- There is no SQL and no string-built query anywhere. Convex queries go through typed index and search helpers, and React escapes every value it renders, so markup typed into a tool name stays text.
 
 ## What I would change for production
 
@@ -206,6 +208,7 @@ Failures:
 - Store a community time zone and compute "today" in it. UTC days are fine for a demo and wrong for a neighborhood in another zone around midnight.
 - Deep pages get slower, because page N reads N times ten rows. For lists with tens of thousands of rows, switch to the Convex aggregate component for counts and offsets, or to cursor paging with "load more". The public list shows the newest 50 live tools and would need its own paging too.
 - Add rate limiting on mutations (the Convex rate limiter component) on top of the current caps.
+- Tighten the content security policy with nonces. Pages are prerendered today, so inline scripts cannot carry a per-request nonce and `script-src` keeps `'unsafe-inline'`. Nonces mean rendering every page per request.
 - Run n8n with Postgres, queue mode and backups instead of the single container with SQLite, and keep execution data for a limited time, because executions contain email addresses.
 - Remove user data on account deletion through a Clerk webhook, and write an audit log for admin actions.
 - Add end-to-end tests in a browser against a Clerk test instance. The current tests cover the backend rules and the integration endpoints. The signed-in pages were walked through by hand with a real Clerk sign-in against the local stack: listing, request, approval, return, cancellation, the admin page and the notification list.
