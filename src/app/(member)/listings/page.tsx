@@ -1,18 +1,9 @@
-"use client";
+import { ListingsPage } from "./ListingsPage";
 
-import { useQuery } from "convex/react";
-import { api } from "../../../../convex/_generated/api";
-import { ListingsView } from "@/components/ListingsView";
-import { PageTitle } from "@/components/ui";
+// The page waits for the session in the browser, so nothing here can be
+// prerendered for an instant navigation.
+export const instant = false;
 
-export default function ListingsPage() {
-  return (
-    <>
-      <PageTitle
-        title="My listings"
-        hint="Tools you are willing to lend. Removing a listing declines its open requests."
-      />
-      <ListingsView tools={useQuery(api.tools.mine)} />
-    </>
-  );
+export default function Page() {
+  return <ListingsPage />;
 }
