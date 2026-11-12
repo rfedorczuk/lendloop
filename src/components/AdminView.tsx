@@ -1,11 +1,12 @@
 "use client";
 
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { api } from "../../convex/_generated/api";
+import { useLatest, useListState } from "@/lib/useListState";
 import { useSubmit } from "@/lib/useSubmit";
-import { LoanList } from "./LoanList";
-import type { Loan } from "./LoanList";
+import { Pagination, SearchField } from "./ListControls";
+import { PagedLoans } from "./PagedLoans";
 import { TimeAgo } from "./TimeAgo";
 import {
   Empty,
@@ -19,11 +20,7 @@ import {
   Tag,
 } from "./ui";
 
-export type Member = FunctionReturnType<typeof api.admin.users>[number];
-export type Issue = FunctionReturnType<
-  typeof api.admin.automationIssues
->[number];
-
+type Member = FunctionReturnType<typeof api.admin.users>["items"][number];
 // Short labels for what failed. Outbox rows carry the event kind,
 // log rows carry the type of message.
 const ISSUE_LABELS: Record<string, string> = {
@@ -69,82 +66,81 @@ function MemberRow({ member }: { member: Member }) {
   );
 }
 
-export function AdminView({
-  members,
-  issues,
-  loans,
-}: {
-  members: Member[] | undefined;
-  issues: Issue[] | undefined;
-  loans: Loan[] | undefined;
-}) {
+function Members() {
+  const list = useListState();
+  const data = useLatest(useQuery(api.admin.users, list.args));
+
+  return (
+    <section aria-labelledby="members">
+      <SectionHead id="members" title="Members" />
+      <div className="mb-3">
+        <SearchField
+          label="Search members"
+          value={list.input}
+          onChange={list.setInput}
+        />
+      </div>
+      {data === undefined ? (
+        <Loading />
+      ) : data.items.length === 0 ? (
+        <Empty>No members match this search.</Empty>
+      ) : (
+        <List>
+          {data.items.map((member) => (
+            <MemberRow key={member._id} member={member} />
+          ))}
+        </List>
+      )}
+      {data && <Pagination paging={data} onPage={list.setPage} />}
+    </section>
+  );
+}
+
+function AutomationProblems() {
+  const issues = useQuery(api.admin.automationIssues);
+
+  return (
+    <section aria-labelledby="automation">
+      <SectionHead
+        id="automation"
+        title="Automation problems"
+        aside={issues && issues.length > 0 && issues.length}
+      />
+      {issues === undefined ? (
+        <Loading rows={1} />
+      ) : issues.length === 0 ? (
+        <Empty>Every notification and reminder went through.</Empty>
+      ) : (
+        <List>
+          {issues.map((issue) => (
+            <Row key={issue._id}>
+              <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                <Status tone="danger">
+                  {ISSUE_LABELS[issue.what] ?? issue.what}
+                </Status>
+                <span className="text-[13px] text-faint">
+                  {issue.source} · <TimeAgo at={issue.at} />
+                </span>
+              </div>
+              <p className="mt-1 break-words text-[13px] text-muted">
+                {issue.detail}
+              </p>
+            </Row>
+          ))}
+        </List>
+      )}
+    </section>
+  );
+}
+
+export function AdminView() {
   return (
     <div className="space-y-10">
-      <section aria-labelledby="members">
-        <SectionHead
-          id="members"
-          title="Members"
-          aside={members && members.length}
-        />
-        {members === undefined ? (
-          <Loading />
-        ) : (
-          <List>
-            {members.map((member) => (
-              <MemberRow key={member._id} member={member} />
-            ))}
-          </List>
-        )}
-      </section>
-
-      <section aria-labelledby="automation">
-        <SectionHead
-          id="automation"
-          title="Automation problems"
-          aside={issues && issues.length > 0 && issues.length}
-        />
-        {issues === undefined ? (
-          <Loading rows={1} />
-        ) : issues.length === 0 ? (
-          <Empty>Every notification and reminder went through.</Empty>
-        ) : (
-          <List>
-            {issues.map((issue) => (
-              <Row key={issue._id}>
-                <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-                  <Status tone="danger">
-                    {ISSUE_LABELS[issue.what] ?? issue.what}
-                  </Status>
-                  <span className="text-[13px] text-faint">
-                    {issue.source} · <TimeAgo at={issue.at} />
-                  </span>
-                </div>
-                <p className="mt-1 break-words text-[13px] text-muted">
-                  {issue.detail}
-                </p>
-              </Row>
-            ))}
-          </List>
-        )}
-      </section>
-
+      <Members />
+      <AutomationProblems />
       <section aria-labelledby="all-loans">
-        <SectionHead
-          id="all-loans"
-          title="All loans"
-          aside={
-            loans &&
-            loans.length > 0 &&
-            (loans.length === 200 ? "Latest 200" : loans.length)
-          }
-        />
-        {loans === undefined ? (
-          <Loading />
-        ) : loans.length === 0 ? (
-          <Empty>No loans yet.</Empty>
-        ) : (
-          <LoanList loans={loans} view="admin" />
-        )}
+        <SectionHead id="all-loans" title="All loans" />
+        <PagedLoans source={api.loans.all} view="admin" empty="No loans yet." />
       </section>
     </div>
   );

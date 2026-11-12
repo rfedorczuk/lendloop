@@ -6,13 +6,17 @@ import { api } from "../../../../convex/_generated/api";
 import { BoardView } from "@/components/BoardView";
 import type { CategoryFilter } from "@/components/BoardView";
 import { PageTitle } from "@/components/ui";
+import { useLatest, useListState } from "@/lib/useListState";
 
 export default function BoardPage() {
   const [category, setCategory] = useState<CategoryFilter>("all");
+  const list = useListState();
   const me = useQuery(api.users.me);
-  const tools = useQuery(
-    api.tools.list,
-    category === "all" ? {} : { category },
+  const data = useLatest(
+    useQuery(
+      api.tools.list,
+      category === "all" ? list.args : { ...list.args, category },
+    ),
   );
 
   return (
@@ -22,10 +26,17 @@ export default function BoardPage() {
         hint="Every tool your neighbors have listed, with its current status."
       />
       <BoardView
-        tools={tools}
+        data={data}
         isAdmin={me?.role === "admin"}
         category={category}
-        onCategory={setCategory}
+        onCategory={(next) => {
+          setCategory(next);
+          list.setPage(1);
+        }}
+        search={list.input}
+        onSearch={list.setInput}
+        searching={list.searching}
+        onPage={list.setPage}
       />
     </>
   );

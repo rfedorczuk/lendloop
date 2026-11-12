@@ -9,7 +9,7 @@ import { TimeAgo } from "./TimeAgo";
 import { Button, FormError, List, Row, Status } from "./ui";
 import type { Tone } from "./ui";
 
-export type Loan = FunctionReturnType<typeof api.loans.mine>[number];
+export type Loan = FunctionReturnType<typeof api.loans.mine>["items"][number];
 type View = "borrower" | "owner" | "admin";
 
 const STATUS: Record<Loan["status"], { label: string; tone: Tone }> = {

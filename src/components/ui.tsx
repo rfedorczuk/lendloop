@@ -249,7 +249,7 @@ export function Field({
 }
 
 export const inputClass =
-  "block h-9 w-full rounded-lg border border-line-strong bg-panel px-3 text-sm text-ink placeholder:text-faint hover:border-faint focus-visible:border-accent focus-visible:outline-offset-0 disabled:opacity-50";
+  "block h-9 w-full rounded-lg border border-line-strong bg-panel px-3 text-sm text-ink placeholder:text-faint hover:border-faint focus-visible:border-accent focus-visible:-outline-offset-1 disabled:opacity-50";
 
 export const textareaClass = `${inputClass} h-auto py-2 leading-5`;
 

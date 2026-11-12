@@ -13,6 +13,7 @@ import {
 import type { Category } from "@/lib/format";
 import { useSubmit } from "@/lib/useSubmit";
 import { BorrowForm } from "./BorrowForm";
+import { Pagination, SearchField } from "./ListControls";
 import {
   Button,
   ConfirmButton,
@@ -26,7 +27,8 @@ import {
   Tag,
 } from "./ui";
 
-export type BoardTool = FunctionReturnType<typeof api.tools.list>[number];
+export type Board = FunctionReturnType<typeof api.tools.list>;
+export type BoardTool = Board["items"][number];
 export type CategoryFilter = Category | "all";
 
 const FILTERS = [["all", "All"], ...CATEGORIES] as const;
@@ -110,19 +112,29 @@ function ToolRow({ tool, isAdmin }: { tool: BoardTool; isAdmin: boolean }) {
 }
 
 export function BoardView({
-  tools,
+  data,
   isAdmin,
   category,
   onCategory,
+  search,
+  onSearch,
+  searching,
+  onPage,
 }: {
-  tools: BoardTool[] | undefined;
+  data: Board | undefined;
   isAdmin: boolean;
   category: CategoryFilter;
   onCategory: (category: CategoryFilter) => void;
+  search: string;
+  onSearch: (search: string) => void;
+  // True once the typed text has reached the query.
+  searching: boolean;
+  onPage: (page: number) => void;
 }) {
   return (
     <>
-      <div className="mb-3">
+      <div className="mb-3 space-y-2">
+        <SearchField label="Search tools" value={search} onChange={onSearch} />
         <Segmented
           label="Category"
           options={FILTERS}
@@ -130,17 +142,22 @@ export function BoardView({
           onChange={onCategory}
         />
       </div>
-      {tools === undefined ? (
+      {data === undefined ? (
         <Loading />
-      ) : tools.length === 0 ? (
-        <Empty>No tools in this category yet.</Empty>
+      ) : data.items.length === 0 ? (
+        <Empty>
+          {searching
+            ? "No tools match this search."
+            : "No tools in this category yet."}
+        </Empty>
       ) : (
         <List>
-          {tools.map((tool) => (
+          {data.items.map((tool) => (
             <ToolRow key={tool._id} tool={tool} isAdmin={isAdmin} />
           ))}
         </List>
       )}
+      {data && <Pagination paging={data} onPage={onPage} />}
     </>
   );
 }
