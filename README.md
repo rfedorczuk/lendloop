@@ -9,11 +9,11 @@ Stack: Next.js 16 (App Router), Clerk, Convex, n8n, TypeScript, Tailwind CSS.
 | Area | What it does |
 |---|---|
 | Public page | Tagline, a read-only list of available tools (name and category only), and a "Sign in to lend or borrow" button |
-| Board | Every listed tool with its availability, filterable by category. Request to borrow for a date range |
+| Board | Every listed tool with its availability, filterable by category and searchable by name, in numbered pages. Request to borrow for a date range |
 | My listings | Create, edit and remove your own tools |
-| My requests | Your borrow requests and loans. Cancel a request, or an approved loan before its first day |
-| Incoming | Requests for your tools: approve, decline, cancel before the first day, mark as returned. The navigation shows how many wait for you |
-| Admin | Mark members as trusted lenders, see all loans, see automation failures. Admins can also remove any listing from the board |
+| My requests | Your borrow requests and loans, searchable by tool name, in numbered pages. Cancel a request, or an approved loan before its first day |
+| Incoming | Requests for your tools, searchable and paged the same way: approve, decline, cancel before the first day, mark as returned. The navigation shows how many wait for you |
+| Admin | Mark members as trusted lenders, see all loans, see automation failures. Members and loans have search and pages. Admins can also remove any listing from the board |
 | Notifications | A bell in the header lists the loan events addressed to you and counts the new ones, updated live |
 | Automation | Two n8n workflows (loan notifications by email, daily overdue reminders) and an error workflow |
 
@@ -94,7 +94,7 @@ To try the overdue reminders without waiting for 08:00, open "LendLoop: overdue 
 ### Checks
 
 ```bash
-npm test           # 34 tests for access rules, loan rules, signatures and the automation endpoints
+npm test           # 37 tests for access rules, loan rules, paging, search, signatures and the automation endpoints
 npm run typecheck
 npm run lint
 npm run build
@@ -126,7 +126,7 @@ src/app            pages: public home, member area in (member)/, sign-in
 src/components     UI pieces and the provider that connects Clerk to Convex
 src/proxy.ts       Clerk middleware: redirects signed-out visitors
 convex/schema.ts   tables: users, tools, loans, outbox, automationLog
-convex/lib         auth helpers, date rules, loan rules, HMAC signatures
+convex/lib         auth helpers, date rules, loan rules, paging, HMAC signatures
 convex/*.ts        public queries and mutations per area (tools, loans, notifications, admin)
 convex/automation.ts   internal functions behind the n8n integration
 convex/http.ts     the two signed HTTP endpoints n8n calls
@@ -138,7 +138,7 @@ The browser talks only to Convex. There is no separate API layer in Next.js, so 
 
 ### Interface
 
-Pages fetch data and hand it to view components in `src/components` (`BoardView`, `ListingsView`, `LoanList`, `AdminView`), which only render props and call mutations. Every colour is a token in `src/app/globals.css`, with a light and a dark set that follow the system setting. The UI is built from a few shared parts in `src/components/ui.tsx`: buttons with a pending state, status dots with text labels, bordered lists with hairlines, a segmented filter and a switch. Layouts were checked at 320, 375 and desktop widths.
+Pages hold the list state (page number, search text, filter) and hand data to components in `src/components`. `BoardView`, `ListingsView` and `LoanList` only render props and call mutations. `PagedLoans` and the admin sections fetch their own page, because the same list appears in several places. Search fields and page numbers come from `ListControls.tsx`, and typing is debounced before it reaches a query. Every colour is a token in `src/app/globals.css`, with a light and a dark set that follow the system setting. The UI is built from a few shared parts in `src/components/ui.tsx`: buttons with a pending state, status dots with text labels, bordered lists with hairlines, a segmented filter and a switch. Layouts were checked at 320, 375 and desktop widths.
 
 ### Access control
 
@@ -151,6 +151,14 @@ Pages fetch data and hand it to view components in `src/components` (`BoardView`
 ### Loans
 
 Dates are calendar days (`YYYY-MM-DD`, UTC, both ends inclusive). A request is rejected if it starts in the past or more than a year ahead, runs longer than 30 days or overlaps an approved loan. An approved loan is cancelled before its first day and returned from then on, so nobody gets a "thanks for returning" message for a tool they never had. A loan that was not returned keeps the tool busy after its end date, so an overdue tool cannot be booked by someone else. Listings are soft-deleted, which keeps loan history readable. Removing a listing declines its open requests and cancels approved loans that have not started. A daily job declines requests nobody answered before their dates passed.
+
+### Pages and search
+
+The board, the loan lists and the admin lists show ten rows per page, with page numbers in blocks of ten (1 to 10, then 11 to 20) and Previous and Next. Convex has no offset queries, so `convex/lib/paging.ts` reads rows up to the end of the current block plus one. That costs at most 101 small rows for the first block, tells the UI which page numbers exist and whether a next block follows, and avoids counting a whole table. A page past the end answers with the last page that exists.
+
+Search uses Convex full-text indexes: tools by name (with the category as a filter field), loans by tool name (filtered to the member's own side), members by name. Loans carry a copy of the tool name for this, which also keeps their title readable after a listing is removed. A rename updates the copies.
+
+Two lists are not paged on purpose. "My listings" is capped at 50 tools per member, and the notification list shows the latest 20 events.
 
 ### Automation
 
@@ -196,7 +204,7 @@ Failures:
 - Use a separate secret per direction and rotate them. On a shared n8n instance, move the signing into a small custom node or an external secret store, so that other workflows cannot read the values through `$env`.
 - Send real email through a provider with a verified domain, and add unsubscribe handling and notification preferences.
 - Store a community time zone and compute "today" in it. UTC days are fine for a demo and wrong for a neighborhood in another zone around midnight.
-- Paginate the board and the loan lists, and replace the per-row lookups with indexed queries or denormalized fields once there is real data.
+- Deep pages get slower, because page N reads N times ten rows. For lists with tens of thousands of rows, switch to the Convex aggregate component for counts and offsets, or to cursor paging with "load more". The public list shows the newest 50 live tools and would need its own paging too.
 - Add rate limiting on mutations (the Convex rate limiter component) on top of the current caps.
 - Run n8n with Postgres, queue mode and backups instead of the single container with SQLite, and keep execution data for a limited time, because executions contain email addresses.
 - Remove user data on account deletion through a Clerk webhook, and write an audit log for admin actions.
