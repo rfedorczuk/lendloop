@@ -41,6 +41,8 @@ export default defineSchema({
     email: v.string(),
     role: v.union(v.literal("admin"), v.literal("user")),
     trustedLender: v.boolean(),
+    // When the user last opened the notification list.
+    notificationsSeenAt: v.optional(v.number()),
   }).index("by_token", ["tokenIdentifier"]),
 
   tools: defineTable({
@@ -69,8 +71,9 @@ export default defineSchema({
     .index("by_borrower", ["borrowerId"])
     .index("by_status_and_end", ["status", "endDate"]),
 
-  // Outgoing events for n8n. A row is written in the same transaction as the
-  // loan change, then delivered by a scheduled action with retries.
+  // One row per loan event and recipient. It is written in the same
+  // transaction as the loan change and does two jobs: the in-app notification
+  // list reads it directly, and a scheduled action delivers it to n8n.
   outbox: defineTable({
     loanId: v.id("loans"),
     kind: loanEventKind,
@@ -84,7 +87,8 @@ export default defineSchema({
     lastError: v.optional(v.string()),
   })
     .index("by_loan", ["loanId"])
-    .index("by_state", ["state"]),
+    .index("by_state", ["state"])
+    .index("by_recipient", ["recipientId"]),
 
   // What n8n reports back. `key` makes every write-back idempotent.
   automationLog: defineTable({

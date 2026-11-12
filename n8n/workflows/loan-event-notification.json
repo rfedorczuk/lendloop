@@ -103,7 +103,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Turns a loan event into one plain-text message for its recipient.\nconst { event } = $input.first().json;\nconst period = `${event.startDate} to ${event.endDate}`;\nconst messages = {\n  'loan.requested': {\n    subject: `${event.otherFirstName} wants to borrow your ${event.toolName}`,\n    text: `${event.otherFirstName} asked to borrow your ${event.toolName} from ${period}. Open LendLoop to approve or decline.`,\n  },\n  'loan.approved': {\n    subject: `Your request for the ${event.toolName} was approved`,\n    text: `${event.otherFirstName} approved your request. The ${event.toolName} is yours from ${period}.`,\n  },\n  'loan.declined': {\n    subject: `Your request for the ${event.toolName} was declined`,\n    text: `Your request for the ${event.toolName} (${period}) was declined. Other tools are on the board.`,\n  },\n  'loan.cancelled': {\n    subject: `The loan of the ${event.toolName} was cancelled`,\n    text: `The loan of the ${event.toolName} planned for ${period} was cancelled.`,\n  },\n  'loan.returned': {\n    subject: `Thanks for returning the ${event.toolName}`,\n    text: `${event.otherFirstName} confirmed that the ${event.toolName} is back. Thanks for returning it.`,\n  },\n};\nconst message = messages[event.kind];\nif (!message) throw new Error(`Unknown event kind: ${event.kind}`);\n\nreturn [{\n  json: {\n    eventId: event.eventId,\n    loanId: event.loanId,\n    mail: {\n      From: { Email: 'no-reply@lendloop.test', Name: 'LendLoop' },\n      To: [{ Email: event.recipient.email, Name: event.recipient.firstName }],\n      Subject: message.subject,\n      Text: `Hi ${event.recipient.firstName},\\n\\n${message.text}\\n\\nLendLoop`,\n    },\n  },\n}];"
+        "jsCode": "// Turns a loan event into one plain-text message for its recipient.\nconst { event } = $input.first().json;\n\n// Convex can deliver the same event twice, for example when it retries after\n// a timeout that n8n in fact received. Ids of recent events are kept in the\n// workflow's static data and a repeat stops here, before anything is sent.\nconst memory = $getWorkflowStaticData('global');\nconst seen = memory.eventIds ?? [];\nif (seen.includes(event.eventId)) return [];\nmemory.eventIds = [...seen, event.eventId].slice(-500);\n\nconst period = `${event.startDate} to ${event.endDate}`;\nconst messages = {\n  'loan.requested': {\n    subject: `${event.otherFirstName} wants to borrow your ${event.toolName}`,\n    text: `${event.otherFirstName} asked to borrow your ${event.toolName} from ${period}. Open LendLoop to approve or decline.`,\n  },\n  'loan.approved': {\n    subject: `Your request for the ${event.toolName} was approved`,\n    text: `${event.otherFirstName} approved your request. The ${event.toolName} is yours from ${period}.`,\n  },\n  'loan.declined': {\n    subject: `Your request for the ${event.toolName} was declined`,\n    text: `Your request for the ${event.toolName} (${period}) was declined. Other tools are on the board.`,\n  },\n  'loan.cancelled': {\n    subject: `The loan of the ${event.toolName} was cancelled`,\n    text: `The loan of the ${event.toolName} planned for ${period} was cancelled.`,\n  },\n  'loan.returned': {\n    subject: `Thanks for returning the ${event.toolName}`,\n    text: `${event.otherFirstName} confirmed that the ${event.toolName} is back. Thanks for returning it.`,\n  },\n};\nconst message = messages[event.kind];\nif (!message) throw new Error(`Unknown event kind: ${event.kind}`);\n\nreturn [{\n  json: {\n    eventId: event.eventId,\n    loanId: event.loanId,\n    mail: {\n      From: { Email: 'no-reply@lendloop.test', Name: 'LendLoop' },\n      To: [{ Email: event.recipient.email, Name: event.recipient.firstName }],\n      Subject: message.subject,\n      Text: `Hi ${event.recipient.firstName},\\n\\n${message.text}\\n\\nLendLoop`,\n    },\n  },\n}];"
       },
       "id": "c1392498-067e-598b-8c11-ccb4220a1fef",
       "name": "Compose message",
@@ -116,31 +116,20 @@
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "={{ $env.MAILPIT_URL }}/api/v1/send",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify($json.mail) }}",
-        "options": {
-          "timeout": 10000
-        }
+        "jsCode": "// Sends one message through the mail API. Tries three times, waiting a\n// little longer each time, and returns the error text if all attempts fail.\nasync function sendMail(helpers, mail) {\n  let lastError;\n  for (let attempt = 1; attempt <= 3; attempt++) {\n    try {\n      await helpers.httpRequest({\n        method: 'POST',\n        url: `${$env.MAILPIT_URL}/api/v1/send`,\n        body: mail,\n        json: true,\n        timeout: 10000,\n      });\n      return null;\n    } catch (error) {\n      lastError = error;\n      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));\n    }\n  }\n  return String(lastError?.message ?? lastError).slice(0, 200);\n}\n\nconst source = $input.first().json;\nconst error = await sendMail(this.helpers, source.mail);\nreturn [{ json: { eventId: source.eventId, loanId: source.loanId, error } }];"
       },
       "id": "09be8714-2f9d-52bc-9199-2c23130865e1",
       "name": "Send notification",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.5,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         1100,
         -100
-      ],
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000,
-      "onError": "continueRegularOutput"
+      ]
     },
     {
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\n\n// Signs `${timestamp}.${payload}` the same way convex/lib/signature.ts does.\nfunction signedHeaders(payload) {\n  const secret = $env.AUTOMATION_SECRET;\n  if (!secret) throw new Error('AUTOMATION_SECRET is not set for n8n');\n  const timestamp = Math.floor(Date.now() / 1000).toString();\n  const digest = crypto.createHmac('sha256', secret).update(`${timestamp}.${payload}`).digest('hex');\n  return { 'X-LendLoop-Timestamp': timestamp, 'X-LendLoop-Signature': `sha256=${digest}` };\n}\n\n// The mail node continues on error, so its output says whether it worked.\nconst result = $input.first().json;\nconst source = $('Compose message').first().json;\nconst failed = result.error !== undefined;\nconst body = JSON.stringify({\n  loanId: source.loanId,\n  kind: 'notification',\n  key: `notification:${source.eventId}`,\n  status: failed ? 'failed' : 'sent',\n  detail: failed ? String(result.error.message ?? result.error).slice(0, 200) : undefined,\n});\nreturn [{ json: { body, headers: signedHeaders(body), failed } }];"
+        "jsCode": "const crypto = require('crypto');\n\n// Signs `${timestamp}.${payload}` the same way convex/lib/signature.ts does.\nfunction signedHeaders(payload) {\n  const secret = $env.AUTOMATION_SECRET;\n  if (!secret) throw new Error('AUTOMATION_SECRET is not set for n8n');\n  const timestamp = Math.floor(Date.now() / 1000).toString();\n  const digest = crypto.createHmac('sha256', secret).update(`${timestamp}.${payload}`).digest('hex');\n  return { 'X-LendLoop-Timestamp': timestamp, 'X-LendLoop-Signature': `sha256=${digest}` };\n}\n\n// Tells Convex whether the message went out. The key makes a repeated\n// report harmless.\nconst result = $input.first().json;\nconst failed = result.error !== null;\nconst body = JSON.stringify({\n  loanId: result.loanId,\n  kind: 'notification',\n  key: `notification:${result.eventId}`,\n  status: failed ? 'failed' : 'sent',\n  detail: failed ? result.error : undefined,\n});\nreturn [{ json: { body, headers: signedHeaders(body), failed } }];"
       },
       "id": "1da8b7a1-5705-5972-9b8e-9dca3d037ce1",
       "name": "Sign report",

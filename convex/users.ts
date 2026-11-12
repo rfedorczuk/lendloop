@@ -23,7 +23,12 @@ export const store = mutation({
       throw new ConvexError("You need to sign in first.");
     }
 
-    const email = (identity.email ?? "").toLowerCase();
+    const email = (identity.email ?? "").trim().toLowerCase();
+    if (email === "") {
+      // Notifications go to this address, so an account without one is
+      // stopped here and not when the first message fails.
+      throw new ConvexError("Your account needs an email address.");
+    }
     const name =
       identity.name?.trim() ||
       identity.givenName?.trim() ||

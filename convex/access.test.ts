@@ -56,6 +56,33 @@ describe("roles", () => {
   });
 });
 
+describe("accounts and input", () => {
+  test("an account without an email is rejected", async () => {
+    const { t } = await setup();
+    const nobody = t.withIdentity({
+      tokenIdentifier: "https://clerk.test|no-email",
+      name: "No Email",
+    });
+    await expect(nobody.mutation(api.users.store, {})).rejects.toThrow(
+      /email address/,
+    );
+  });
+
+  test("line breaks are removed from tool names", async () => {
+    const { alice } = await setup();
+    await alice.mutation(api.tools.create, {
+      name: `Ladder${String.fromCharCode(13, 10)}Bcc: someone@example.com`,
+      category: "other",
+      condition: "good",
+      description: "",
+    });
+    const names = (await alice.query(api.tools.mine, {})).map(
+      (tool) => tool.name,
+    );
+    expect(names).toContain("Ladder Bcc: someone@example.com");
+  });
+});
+
 describe("listings", () => {
   test("the public list shows name and category only", async () => {
     const { t } = await setup();
@@ -189,7 +216,7 @@ describe("loans", () => {
     });
 
     await expect(carol.mutation(api.loans.cancel, { loanId })).rejects.toThrow(
-      /your own requests/,
+      /part of/,
     );
 
     await alice.mutation(api.loans.decide, { loanId, approve: true });
@@ -225,6 +252,36 @@ describe("loans", () => {
     expect(await t.query(api.tools.listPublic, {})).toHaveLength(1);
   });
 
+  test("a loan that has not started is cancelled, not returned", async () => {
+    const { alice, bob, drill } = await setup();
+    const loanId = await bob.mutation(api.loans.request, {
+      toolId: drill,
+      startDate: day(3),
+      endDate: day(5),
+    });
+    await alice.mutation(api.loans.decide, { loanId, approve: true });
+
+    await expect(
+      alice.mutation(api.loans.markReturned, { loanId }),
+    ).rejects.toThrow(/not started/);
+
+    // The lender can call it off before the first day.
+    await alice.mutation(api.loans.cancel, { loanId });
+    const [loan] = await bob.query(api.loans.mine, {});
+    expect(loan.status).toBe("cancelled");
+  });
+
+  test("a request cannot start more than a year ahead", async () => {
+    const { bob, drill } = await setup();
+    await expect(
+      bob.mutation(api.loans.request, {
+        toolId: drill,
+        startDate: day(400),
+        endDate: day(401),
+      }),
+    ).rejects.toThrow(/a year/);
+  });
+
   test("members see only loans they are part of", async () => {
     const { alice, bob, carol, drill } = await setup();
     await bob.mutation(api.loans.request, {
@@ -233,6 +290,8 @@ describe("loans", () => {
       endDate: day(2),
     });
     expect(await alice.query(api.loans.incoming, {})).toHaveLength(1);
+    expect(await alice.query(api.loans.waitingCount, {})).toBe(1);
+    expect(await carol.query(api.loans.waitingCount, {})).toBe(0);
     expect(await bob.query(api.loans.mine, {})).toHaveLength(1);
     expect(await carol.query(api.loans.mine, {})).toHaveLength(0);
     expect(await carol.query(api.loans.incoming, {})).toHaveLength(0);

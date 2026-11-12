@@ -10,12 +10,15 @@
 
 import type * as admin from "../admin.js";
 import type * as automation from "../automation.js";
+import type * as crons from "../crons.js";
 import type * as http from "../http.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_dates from "../lib/dates.js";
 import type * as lib_loans from "../lib/loans.js";
 import type * as lib_signature from "../lib/signature.js";
 import type * as loans from "../loans.js";
+import type * as maintenance from "../maintenance.js";
+import type * as notifications from "../notifications.js";
 import type * as tools from "../tools.js";
 import type * as users from "../users.js";
 
@@ -28,12 +31,15 @@ import type {
 declare const fullApi: ApiFromModules<{
   admin: typeof admin;
   automation: typeof automation;
+  crons: typeof crons;
   http: typeof http;
   "lib/auth": typeof lib_auth;
   "lib/dates": typeof lib_dates;
   "lib/loans": typeof lib_loans;
   "lib/signature": typeof lib_signature;
   loans: typeof loans;
+  maintenance: typeof maintenance;
+  notifications: typeof notifications;
   tools: typeof tools;
   users: typeof users;
 }>;

@@ -8,6 +8,7 @@ const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const MAX_LOAN_DAYS = 30;
+export const MAX_DAYS_AHEAD = 365;
 
 export function today(now: number = Date.now()): string {
   return new Date(now).toISOString().slice(0, 10);
@@ -38,6 +39,9 @@ export function assertLoanPeriod(
   }
   if (startDate < today(now)) {
     throw new ConvexError("The loan cannot start in the past.");
+  }
+  if (daysBetween(today(now), startDate) > MAX_DAYS_AHEAD) {
+    throw new ConvexError("A loan can start at most a year from now.");
   }
   if (endDate < startDate) {
     throw new ConvexError("The return date must not be before the start date.");

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import {
   SIGNATURE_HEADER,
   TIMESTAMP_HEADER,
@@ -114,6 +114,101 @@ describe("Convex to n8n", () => {
       what: "loan.requested",
       detail: "n8n answered 503",
     });
+  });
+});
+
+describe("activity and housekeeping", () => {
+  test("a member sees only the notifications addressed to them", async () => {
+    const { t, alice, bob, drill } = await setup();
+    const loanId = await bob.mutation(api.loans.request, {
+      toolId: drill,
+      startDate: day(1),
+      endDate: day(2),
+    });
+    // The request event went to Alice, the lender.
+    const [event] = await t.run((ctx) => ctx.db.query("outbox").collect());
+    await t.mutation(internal.automation.recordLog, {
+      loanId,
+      kind: "notification",
+      key: `notification:${event._id}`,
+      status: "sent",
+    });
+
+    const [asLender] = await alice.query(api.loans.incoming, {});
+    const [asBorrower] = await bob.query(api.loans.mine, {});
+    expect(asLender.activity).toHaveLength(1);
+    expect(asBorrower.activity).toHaveLength(0);
+  });
+
+  test("the in-app list shows a user's own events and tracks what is new", async () => {
+    const { alice, bob, carol, drill } = await setup();
+    const loanId = await bob.mutation(api.loans.request, {
+      toolId: drill,
+      startDate: day(1),
+      endDate: day(2),
+    });
+
+    const forAlice = await alice.query(api.notifications.list, {});
+    expect(forAlice.unread).toBe(1);
+    expect(forAlice.items[0]).toMatchObject({
+      kind: "loan.requested",
+      toolName: "Cordless drill",
+      otherName: "Bob",
+      href: "/incoming",
+      unread: true,
+    });
+    expect((await bob.query(api.notifications.list, {})).items).toHaveLength(0);
+    expect((await carol.query(api.notifications.list, {})).items).toHaveLength(
+      0,
+    );
+
+    vi.setSystemTime(NOW + 60_000);
+    await alice.mutation(api.notifications.markSeen, {});
+    expect((await alice.query(api.notifications.list, {})).unread).toBe(0);
+
+    vi.setSystemTime(NOW + 120_000);
+    await alice.mutation(api.loans.decide, { loanId, approve: true });
+    const forBob = await bob.query(api.notifications.list, {});
+    expect(forBob.items[0]).toMatchObject({
+      kind: "loan.approved",
+      otherName: "Alice",
+      href: "/requests",
+      unread: true,
+    });
+  });
+
+  test("requests whose dates have passed are declined", async () => {
+    const { t, alice, bob, drill } = await setup();
+    await bob.mutation(api.loans.request, {
+      toolId: drill,
+      startDate: day(1),
+      endDate: day(2),
+    });
+
+    vi.setSystemTime(NOW + 2 * 86_400_000);
+    expect(await t.mutation(internal.maintenance.expireRequests, {})).toBe(0);
+    vi.setSystemTime(NOW + 3 * 86_400_000);
+    expect(await t.mutation(internal.maintenance.expireRequests, {})).toBe(1);
+
+    const [loan] = await alice.query(api.loans.incoming, {});
+    expect(loan.status).toBe("declined");
+  });
+
+  test("an event stuck in delivery is marked as failed", async () => {
+    const { t, bob, admin, drill } = await setup();
+    await bob.mutation(api.loans.request, {
+      toolId: drill,
+      startDate: day(1),
+      endDate: day(2),
+    });
+
+    // The delivery action never ran, as if it had crashed.
+    expect(await t.mutation(internal.maintenance.failStuckEvents, {})).toBe(0);
+    vi.setSystemTime(NOW + 4 * 3_600_000);
+    expect(await t.mutation(internal.maintenance.failStuckEvents, {})).toBe(1);
+
+    const [issue] = await admin.query(api.admin.automationIssues, {});
+    expect(issue.detail).toBe("Delivery did not complete");
   });
 });
 

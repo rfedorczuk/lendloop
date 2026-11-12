@@ -13,8 +13,11 @@ import {
 const MAX_LISTINGS_PER_OWNER = 50;
 
 function cleanListing(input: { name: string; description: string }) {
-  const name = input.name.trim();
-  const description = input.description.trim();
+  // Control characters and line breaks become spaces. Names end up in email
+  // subjects, where a line break would be a header injection.
+  const tidy = (text: string) => text.replace(/\p{Cc}+/gu, " ").trim();
+  const name = tidy(input.name);
+  const description = tidy(input.description);
   if (name.length < 2 || name.length > 60) {
     throw new ConvexError("The name must be 2 to 60 characters long.");
   }

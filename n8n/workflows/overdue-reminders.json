@@ -82,31 +82,20 @@
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "={{ $env.MAILPIT_URL }}/api/v1/send",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify($json.mail) }}",
-        "options": {
-          "timeout": 10000
-        }
+        "jsCode": "// Sends one message through the mail API. Tries three times, waiting a\n// little longer each time, and returns the error text if all attempts fail.\nasync function sendMail(helpers, mail) {\n  let lastError;\n  for (let attempt = 1; attempt <= 3; attempt++) {\n    try {\n      await helpers.httpRequest({\n        method: 'POST',\n        url: `${$env.MAILPIT_URL}/api/v1/send`,\n        body: mail,\n        json: true,\n        timeout: 10000,\n      });\n      return null;\n    } catch (error) {\n      lastError = error;\n      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));\n    }\n  }\n  return String(lastError?.message ?? lastError).slice(0, 200);\n}\n\n// One loan at a time, so a retry never repeats a message that already went out.\nconst results = [];\nfor (const item of $input.all()) {\n  const error = await sendMail(this.helpers, item.json.mail);\n  results.push({ json: { loanId: item.json.loanId, reminderKey: item.json.reminderKey, error } });\n}\nreturn results;"
       },
-      "id": "29b6eac2-588f-5269-88f4-cca81695bd7b",
-      "name": "Send reminder",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.5,
+      "id": "5941b71c-0ce3-5ccc-b4d7-221e08f8d9f3",
+      "name": "Send reminders",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         880,
         0
-      ],
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000,
-      "onError": "continueRegularOutput"
+      ]
     },
     {
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\n\n// Signs `${timestamp}.${payload}` the same way convex/lib/signature.ts does.\nfunction signedHeaders(payload) {\n  const secret = $env.AUTOMATION_SECRET;\n  if (!secret) throw new Error('AUTOMATION_SECRET is not set for n8n');\n  const timestamp = Math.floor(Date.now() / 1000).toString();\n  const digest = crypto.createHmac('sha256', secret).update(`${timestamp}.${payload}`).digest('hex');\n  return { 'X-LendLoop-Timestamp': timestamp, 'X-LendLoop-Signature': `sha256=${digest}` };\n}\n\n// Pairs each mail result with the loan it was sent for. The key is the one\n// Convex issued, so reporting the same reminder twice changes nothing.\nconst loans = $('One item per loan').all();\nreturn $input.all().map((item, index) => {\n  const loan = loans[index].json;\n  const failed = item.json.error !== undefined;\n  const body = JSON.stringify({\n    loanId: loan.loanId,\n    kind: 'reminder',\n    key: loan.reminderKey,\n    status: failed ? 'failed' : 'sent',\n    detail: failed ? String(item.json.error.message ?? item.json.error).slice(0, 200) : undefined,\n  });\n  return { json: { body, headers: signedHeaders(body), failed } };\n});"
+        "jsCode": "const crypto = require('crypto');\n\n// Signs `${timestamp}.${payload}` the same way convex/lib/signature.ts does.\nfunction signedHeaders(payload) {\n  const secret = $env.AUTOMATION_SECRET;\n  if (!secret) throw new Error('AUTOMATION_SECRET is not set for n8n');\n  const timestamp = Math.floor(Date.now() / 1000).toString();\n  const digest = crypto.createHmac('sha256', secret).update(`${timestamp}.${payload}`).digest('hex');\n  return { 'X-LendLoop-Timestamp': timestamp, 'X-LendLoop-Signature': `sha256=${digest}` };\n}\n\n// One report per loan. The key is the one Convex issued for this loan and\n// day, so reporting the same reminder twice changes nothing.\nreturn $input.all().map((item) => {\n  const failed = item.json.error !== null;\n  const body = JSON.stringify({\n    loanId: item.json.loanId,\n    kind: 'reminder',\n    key: item.json.reminderKey,\n    status: failed ? 'failed' : 'sent',\n    detail: failed ? item.json.error : undefined,\n  });\n  return { json: { body, headers: signedHeaders(body), failed } };\n});"
       },
       "id": "daf89ad6-02bb-5ae0-bc96-32bb2e41c27d",
       "name": "Sign reports",
@@ -241,14 +230,14 @@
       "main": [
         [
           {
-            "node": "Send reminder",
+            "node": "Send reminders",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Send reminder": {
+    "Send reminders": {
       "main": [
         [
           {
